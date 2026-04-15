@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Water Dashboard</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <main class="page-container">
+        <section class="card dashboard-card">
+            <header class="dashboard-header">
+                <h1>Smart Water Dashboard</h1>
+                <div class="header-actions">
+                    <span id="connectionStatus" class="status-chip status-ok">Connected</span>
+                    <button id="viewHistoryBtn" class="btn btn-secondary" type="button">View History</button>
+                    <button id="logoutBtn" class="btn btn-secondary" type="button">Logout</button>
+                </div>
+            </header>
+
+            <section class="panel">
+                <h2>Water Level</h2>
+                <p class="reading"><span id="waterLevelValue">0</span>%</p>
+                <div class="progress-track">
+                    <div id="waterLevelBar" class="progress-bar level-low" style="width: 0%;"></div>
+                </div>
+            </section>
+
+            <section class="panel">
+                <h2>Motor Control</h2>
+                <p class="reading">State: <strong id="motorStateValue">OFF</strong></p>
+                <div class="button-row">
+                    <button id="motorOnBtn" class="btn btn-primary" type="button">ON</button>
+                    <button id="motorOffBtn" class="btn btn-danger" type="button">OFF</button>
+                </div>
+                <small id="motorControlHint" class="hint">Motor controls are active in MANUAL mode.</small>
+            </section>
+
+            <section class="panel">
+                <h2>Mode</h2>
+                <p class="reading">Current: <strong id="modeValue">AUTO</strong></p>
+                <button id="modeToggleBtn" class="btn btn-secondary" type="button">Switch to MANUAL</button>
+            </section>
+
+            <section class="panel">
+                <h2>Fault Status</h2>
+                <p id="faultValue" class="fault fault-none">NONE</p>
+                <p class="timestamp">Last update: <span id="timestampValue">--</span></p>
+            </section>
+        </section>
+    </main>
+
+    <script src="script.js"></script>
+</body>
+</html>
