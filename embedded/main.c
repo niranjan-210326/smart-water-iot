@@ -61,6 +61,13 @@ int main(void) {
         motor_state = get_motor_state();
         /* Compare current and previous level to detect dry-run style faults reliably. */
         fault_code = detect_fault(prev_level, level, motor_state);
+
+        /* Critical protection always overrides AUTO/MANUAL commands for safety. */
+        if (fault_is_critical(fault_code) && motor_state) {
+            motor_off();
+            motor_state = get_motor_state();
+        }
+
         fault_label = fault_to_string(fault_code);
         motor_label = motor_state ? "ON" : "OFF";
 
