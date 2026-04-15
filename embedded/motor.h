@@ -1,9 +1,7 @@
 #ifndef MOTOR_H
 #define MOTOR_H
 
-#ifndef SIMULATION_MODE
-#define SIMULATION_MODE 1
-#endif
+#include "config.h"
 
 void motor_init(void);
 void motor_on(void);

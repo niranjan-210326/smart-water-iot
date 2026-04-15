@@ -9,7 +9,6 @@
 #endif
 
 #define GPIO_CHIP_NAME "gpiochip0"
-#define MOTOR_GPIO_LINE 18
 
 static int motor_state = 0;
 
@@ -33,9 +32,9 @@ void motor_init(void) {
         return;
     }
 
-    line = gpiod_chip_get_line(chip, MOTOR_GPIO_LINE);
+    line = gpiod_chip_get_line(chip, MOTOR_PIN);
     if (line == NULL) {
-        fprintf(stderr, "[ERROR] Failed to get GPIO line %d: %s\n", MOTOR_GPIO_LINE, strerror(errno));
+        fprintf(stderr, "[ERROR] Failed to get GPIO line %d: %s\n", MOTOR_PIN, strerror(errno));
         gpiod_chip_close(chip);
         chip = NULL;
         gpio_ready = 0;
@@ -52,7 +51,7 @@ void motor_init(void) {
     }
 
     gpio_ready = 1;
-    printf("[INFO] GPIO initialized on %s line %d.\n", GPIO_CHIP_NAME, MOTOR_GPIO_LINE);
+    printf("[INFO] GPIO initialized on %s line %d.\n", GPIO_CHIP_NAME, MOTOR_PIN);
 #endif
 }
 

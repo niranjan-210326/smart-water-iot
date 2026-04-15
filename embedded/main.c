@@ -25,6 +25,7 @@ int main(void) {
     /* Register a shutdown signal so motor and GPIO are always released safely. */
     signal(SIGINT, handle_sigint);
     motor_init();
+    sensor_init();
 
     while (keep_running) {
         int level = get_water_level();
@@ -80,6 +81,7 @@ int main(void) {
 
     /* Explicit safe-stop sequence before process exit. */
     motor_off();
+    sensor_cleanup();
     motor_cleanup();
     printf("System safely stopped\n");
 
