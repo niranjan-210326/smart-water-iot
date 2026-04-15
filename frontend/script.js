@@ -2,8 +2,12 @@ const BASE_URL = "http://127.0.0.1:5000";
 const AUTH_KEY = "smart-water-auth";
 const POLL_MS = 2000;
 const LONG_DURATION_THRESHOLD_SECONDS = 120;
+const MAX_CHART_POINTS = 20;
 let dashboardIntervalId = null;
 let historyIntervalId = null;
+let waterLevelHistory = [];
+let timeLabels = [];
+let waterLevelChart = null;
 
 function safeJson(response) {
     return response.text().then((text) => {
@@ -116,6 +120,93 @@ function updateTimestamp(value) {
     }
 }
 
+function formatTimeLabel(timestamp) {
+    if (typeof timestamp === "string" && timestamp.includes(" ")) {
+        const parts = timestamp.split(" ");
+        return parts[parts.length - 1] || timestamp;
+    }
+
+    const now = new Date();
+    return now.toLocaleTimeString("en-GB", { hour12: false });
+}
+
+function initWaterLevelChart() {
+    const chartCanvas = document.getElementById("waterLevelChart");
+    if (!chartCanvas || typeof Chart === "undefined") {
+        return;
+    }
+
+    const context = chartCanvas.getContext("2d");
+    if (!context) {
+        return;
+    }
+
+    waterLevelChart = new Chart(context, {
+        type: "line",
+        data: {
+            labels: timeLabels,
+            datasets: [
+                {
+                    label: "Water Level (%)",
+                    data: waterLevelHistory,
+                    borderColor: "#2563eb",
+                    backgroundColor: "rgba(37, 99, 235, 0.15)",
+                    fill: true,
+                    tension: 0.25,
+                    pointRadius: 2,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            scales: {
+                y: {
+                    min: 0,
+                    max: 100,
+                    title: {
+                        display: true,
+                        text: "Water Level (%)",
+                    },
+                },
+                x: {
+                    title: {
+                        display: true,
+                        text: "Time (HH:MM:SS)",
+                    },
+                },
+            },
+        },
+    });
+}
+
+function updateWaterLevelChart(level, timestamp) {
+    if (waterLevelChart === null) {
+        return;
+    }
+
+    const levelNumber = Number(level);
+    if (Number.isNaN(levelNumber)) {
+        return;
+    }
+
+    const clampedLevel = Math.max(0, Math.min(100, levelNumber));
+    waterLevelHistory.push(clampedLevel);
+    timeLabels.push(formatTimeLabel(timestamp));
+
+    if (waterLevelHistory.length > MAX_CHART_POINTS) {
+        waterLevelHistory.shift();
+    }
+    if (timeLabels.length > MAX_CHART_POINTS) {
+        timeLabels.shift();
+    }
+
+    waterLevelChart.data.labels = timeLabels;
+    waterLevelChart.data.datasets[0].data = waterLevelHistory;
+    waterLevelChart.update();
+}
+
 async function fetchStatus() {
     try {
         const response = await fetch(`${BASE_URL}/status`);
@@ -128,6 +219,7 @@ async function fetchStatus() {
         updateModeAndMotorControls(data.mode, data.motor);
         updateFault(data.fault);
         updateTimestamp(data.timestamp);
+        updateWaterLevelChart(data.water_level, data.timestamp);
     } catch (error) {
         updateConnectionState(false, "connectionStatus");
         updateTimestamp("Backend unavailable");
@@ -180,6 +272,8 @@ function setupDashboard() {
         window.location.href = "index.html";
         return;
     }
+
+    initWaterLevelChart();
 
     const modeToggleBtn = document.getElementById("modeToggleBtn");
     const motorOnBtn = document.getElementById("motorOnBtn");
