@@ -5,7 +5,9 @@ import os
 import sys
 import threading
 import time
+import uuid
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -18,8 +20,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-from backend.database import get_all_logs, init_db, insert_log
+from backend.database import complete_log, get_all_logs, init_db, start_log
+from cloud.config import SECRET_KEY
 from cloud.mongo_sync import connect_to_mongo, sync_log_to_cloud
+
+app.config["SECRET_KEY"] = SECRET_KEY
 
 DATA_DIR = PROJECT_ROOT / "data"
 COMMAND_FILE = DATA_DIR / "command.json"
@@ -30,16 +35,45 @@ DEFAULT_STATUS = {
     "motor": 0,
     "mode": "AUTO",
     "fault": "NONE",
+    "fault_severity": "NONE",
     "timestamp": "--",
 }
 VALID_MODES = {"AUTO", "MANUAL"}
 VALID_MOTOR = {"ON", "OFF"}
 MONITOR_INTERVAL_SECONDS = 2
+VALID_USERS = {"admin": "admin"}
+active_sessions: dict[str, str] = {}
 monitor_state = {
     "previous_motor": 0,
-    "run_start": None,
+    "log_id": None,
     "run_fault": "NONE",
 }
+
+
+def fault_severity_for(fault: str) -> str:
+    normalized = str(fault or "NONE").upper()
+    if normalized == "NONE":
+        return "NONE"
+    if normalized in {"EMPTY_SUMP", "NO_WATER"}:
+        return "WARNING"
+    return "CRITICAL"
+
+
+def require_auth(view_func):
+    @wraps(view_func)
+    def wrapper(*args, **kwargs):
+        print("AUTH HEADER:", request.headers.get("Authorization"))
+
+        # DEV ONLY: allow status checks without token using ?debug=true.
+        if view_func.__name__ == "get_status" and request.args.get("debug") == "true":
+            return view_func(*args, **kwargs)
+
+        token = request.headers.get("Authorization", "").replace("Bearer ", "").strip()
+        if not token or token not in active_sessions:
+            return jsonify({"error": "Unauthorized"}), 401
+        return view_func(*args, **kwargs)
+
+    return wrapper
 
 
 def parse_status_timestamp(timestamp: str | None) -> datetime:
@@ -79,28 +113,19 @@ def monitor_motor_usage() -> None:
 
             # Transition tracking prevents duplicate records and captures complete motor runs.
             if previous_motor == 0 and motor == 1:
-                monitor_state["run_start"] = timestamp
+                monitor_state["log_id"] = start_log(timestamp, fault)
                 monitor_state["run_fault"] = fault
             elif previous_motor == 1 and motor == 1 and fault != "NONE":
                 # Keep the latest fault during an active run so final log reflects real condition.
                 monitor_state["run_fault"] = fault
             elif previous_motor == 1 and motor == 0:
-                start_time = monitor_state["run_start"]
-                if start_time is not None:
-                    duration = int((timestamp - start_time).total_seconds())
-                    fault = monitor_state["run_fault"]
-                    log_data = {
-                        "date": start_time.strftime("%Y-%m-%d"),
-                        "start_time": start_time.strftime("%H:%M:%S"),
-                        "end_time": timestamp.strftime("%H:%M:%S"),
-                        "duration": max(0, duration),
-                        "power_estimate": round(max(0, duration) * 0.5, 2),
-                        "fault": fault,
-                    }
+                log_id = monitor_state["log_id"]
+                if log_id is not None:
+                    log_data = complete_log(log_id, timestamp, monitor_state["run_fault"])
                     # Local persistence is primary; cloud sync is best-effort and non-blocking.
-                    insert_log(start_time, timestamp, duration, fault)
-                    sync_log_to_cloud(log_data)
-                monitor_state["run_start"] = None
+                    if log_data is not None:
+                        sync_log_to_cloud(log_data)
+                monitor_state["log_id"] = None
                 monitor_state["run_fault"] = "NONE"
 
             monitor_state["previous_motor"] = motor
@@ -170,23 +195,66 @@ def read_status_snapshot() -> dict:
         status["mode"] = str(file_status["mode"]).upper()
     if file_status.get("fault"):
         status["fault"] = str(file_status["fault"]).upper()
+    status["fault_severity"] = fault_severity_for(status["fault"])
     if file_status.get("timestamp"):
         status["timestamp"] = str(file_status["timestamp"])
 
     return status
 
 
-@app.route("/status", methods=["GET"])
+@app.route("/api/login", methods=["POST"])
+def api_login():
+    body = request.get_json(silent=True) or {}
+    username = str(body.get("username", ""))
+    password = str(body.get("password", ""))
+
+    if VALID_USERS.get(username) != password:
+        return jsonify({"error": "Invalid credentials"}), 401
+
+    token = f"{uuid.uuid4()}-{SECRET_KEY[:8]}"
+    active_sessions[token] = username
+    return jsonify({"token": token, "username": username}), 200
+
+
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify(
+        {
+            "message": "Smart Water API running",
+            "available_endpoints": [
+                "/api/login",
+                "/api/status",
+                "/api/mode",
+                "/api/motor",
+                "/api/logs",
+            ],
+            "note": "Protected routes require Authorization: Bearer <token>",
+        }
+    ), 200
+
+
+# Test login:
+# curl -X POST http://172.20.10.9:5000/api/login \
+# -H "Content-Type: application/json" \
+# -d '{"username":"admin","password":"admin"}'
+#
+# Test status:
+# curl http://172.20.10.9:5000/api/status \
+# -H "Authorization: Bearer <token>"
+@app.route("/api/status", methods=["GET"])
+@require_auth
 def get_status():
     return jsonify(read_status_snapshot()), 200
 
 
-@app.route("/logs", methods=["GET"])
+@app.route("/api/logs", methods=["GET"])
+@require_auth
 def get_logs():
     return jsonify(get_all_logs()), 200
 
 
-@app.route("/mode", methods=["POST"])
+@app.route("/api/mode", methods=["POST"])
+@require_auth
 def set_mode():
     body = request.get_json(silent=True) or {}
     mode = str(body.get("mode", "")).upper()
@@ -201,10 +269,11 @@ def set_mode():
     return jsonify({"status": "ok", "command": command}), 200
 
 
-@app.route("/motor/control", methods=["POST"])
+@app.route("/api/motor", methods=["POST"])
+@require_auth
 def set_motor():
     body = request.get_json(silent=True) or {}
-    motor = str(body.get("motor", "")).upper()
+    motor = str(body.get("motor", body.get("state", ""))).upper()
 
     if motor not in VALID_MOTOR:
         return jsonify({"error": "motor must be ON or OFF"}), 400

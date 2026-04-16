@@ -33,7 +33,7 @@ def connect_to_mongo():
         print("[CLOUD] pymongo not installed, cloud sync disabled")
         return None
 
-    if not MONGO_URI or "your_mongodb_connection_string" in MONGO_URI:
+    if not MONGO_URI:
         print("[CLOUD] MongoDB URI not configured, cloud sync disabled")
         return None
 

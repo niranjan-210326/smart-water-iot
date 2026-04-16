@@ -1,5 +1,5 @@
 const BASE_URL = "http://127.0.0.1:5000";
-const AUTH_KEY = "smart-water-auth";
+const AUTH_KEY = "smart-water-token";
 const POLL_MS = 2000;
 const LONG_DURATION_THRESHOLD_SECONDS = 120;
 const MAX_CHART_POINTS = 20;
@@ -20,6 +20,42 @@ function safeJson(response) {
             throw new Error("Invalid JSON response");
         }
     });
+}
+
+function getAuthToken() {
+    return localStorage.getItem(AUTH_KEY) || "";
+}
+
+function clearAuthToken() {
+    localStorage.removeItem(AUTH_KEY);
+}
+
+function redirectToLogin() {
+    clearAuthToken();
+    if (!window.location.pathname.toLowerCase().includes("index.html")) {
+        window.location.href = "index.html";
+    }
+}
+
+async function apiFetch(path, options = {}) {
+    const headers = new Headers(options.headers || {});
+    const token = getAuthToken();
+
+    if (token) {
+        headers.set("Authorization", `Bearer ${token}`);
+    }
+
+    const response = await fetch(`${BASE_URL}${path}`, {
+        ...options,
+        headers,
+    });
+
+    if (response.status === 401) {
+        redirectToLogin();
+        throw new Error("Unauthorized");
+    }
+
+    return response;
 }
 
 function updateConnectionState(connected, elementId = "connectionStatus") {
@@ -77,6 +113,24 @@ function updateFault(fault) {
     } else {
         faultValue.classList.add("fault-alert");
     }
+}
+
+function updateFaultBanner(fault, severity) {
+    const banner = document.getElementById("faultAlertBanner");
+    const message = document.getElementById("faultAlertMessage");
+    const normalizedFault = String(fault || "NONE").toUpperCase();
+
+    if (!banner || !message) {
+        return;
+    }
+
+    if (normalizedFault === "NONE") {
+        banner.style.display = "none";
+        return;
+    }
+
+    banner.style.display = "block";
+    message.textContent = `Severity: ${String(severity || "WARNING").toUpperCase()} | Fault: ${normalizedFault}`;
 }
 
 function updateModeAndMotorControls(mode, motorState) {
@@ -209,7 +263,7 @@ function updateWaterLevelChart(level, timestamp) {
 
 async function fetchStatus() {
     try {
-        const response = await fetch(`${BASE_URL}/status`);
+        const response = await apiFetch("/api/status");
         if (!response.ok) {
             throw new Error(`Status request failed (${response.status})`);
         }
@@ -218,6 +272,7 @@ async function fetchStatus() {
         updateWaterLevel(data.water_level);
         updateModeAndMotorControls(data.mode, data.motor);
         updateFault(data.fault);
+        updateFaultBanner(data.fault, data.fault_severity);
         updateTimestamp(data.timestamp);
         updateWaterLevelChart(data.water_level, data.timestamp);
     } catch (error) {
@@ -229,7 +284,7 @@ async function fetchStatus() {
 
 async function setMode(mode) {
     try {
-        const response = await fetch(`${BASE_URL}/mode`, {
+        const response = await apiFetch("/api/mode", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ mode }),
@@ -247,7 +302,7 @@ async function setMode(mode) {
 
 async function controlMotor(state) {
     try {
-        const response = await fetch(`${BASE_URL}/motor/control`, {
+        const response = await apiFetch("/api/motor", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ motor: state }),
@@ -268,8 +323,8 @@ function setupDashboard() {
         return;
     }
 
-    if (sessionStorage.getItem(AUTH_KEY) !== "true") {
-        window.location.href = "index.html";
+    if (!getAuthToken()) {
+        redirectToLogin();
         return;
     }
 
@@ -297,8 +352,7 @@ function setupDashboard() {
     }
     if (logoutBtn) {
         logoutBtn.addEventListener("click", () => {
-            sessionStorage.removeItem(AUTH_KEY);
-            window.location.href = "index.html";
+            redirectToLogin();
         });
     }
     if (viewHistoryBtn) {
@@ -320,23 +374,32 @@ function setupLogin() {
     }
 
     const errorMessage = document.getElementById("loginError");
-    const HARD_USER = "admin";
-    const HARD_PASS = "admin123";
 
-    form.addEventListener("submit", (event) => {
+    form.addEventListener("submit", async (event) => {
         event.preventDefault();
 
         const username = document.getElementById("username")?.value || "";
         const password = document.getElementById("password")?.value || "";
 
-        if (username === HARD_USER && password === HARD_PASS) {
-            sessionStorage.setItem(AUTH_KEY, "true");
+        try {
+            const response = await fetch(`${BASE_URL}/api/login`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password }),
+            });
+
+            if (!response.ok) {
+                throw new Error("Invalid username or password.");
+            }
+
+            const data = await safeJson(response);
+            localStorage.setItem(AUTH_KEY, data.token || "");
             window.location.href = "dashboard.html";
             return;
-        }
-
-        if (errorMessage) {
-            errorMessage.textContent = "Invalid username or password.";
+        } catch (error) {
+            if (errorMessage) {
+                errorMessage.textContent = "Invalid username or password.";
+            }
         }
     });
 }
@@ -368,7 +431,7 @@ function renderLogsTable(logs) {
     logs.forEach((log) => {
         const tr = document.createElement("tr");
         const duration = Number(log.duration) || 0;
-        const power = Number(log.power_estimate) || 0;
+        const power = Number(log.power) || 0;
         const fault = String(log.fault || "NONE").toUpperCase();
 
         totalDuration += duration;
@@ -396,7 +459,7 @@ async function fetchLogs() {
     const emptyState = document.getElementById("logsEmptyState");
 
     try {
-        const response = await fetch(`${BASE_URL}/logs`);
+        const response = await apiFetch("/api/logs");
         if (!response.ok) {
             throw new Error(`Logs request failed (${response.status})`);
         }
@@ -425,8 +488,8 @@ function setupHistory() {
         return;
     }
 
-    if (sessionStorage.getItem(AUTH_KEY) !== "true") {
-        window.location.href = "index.html";
+    if (!getAuthToken()) {
+        redirectToLogin();
         return;
     }
 
