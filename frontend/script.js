@@ -3,6 +3,8 @@ const AUTH_KEY = "smart-water-auth";
 const POLL_MS = 2000;
 const LONG_DURATION_THRESHOLD_SECONDS = 120;
 const MAX_CHART_POINTS = 20;
+let dashboardIntervalId = null;
+let historyIntervalId = null;
 let waterLevelHistory = [];
 let timeLabels = [];
 let waterLevelChart = null;
@@ -262,6 +264,10 @@ async function controlMotor(state) {
 }
 
 function setupDashboard() {
+    if (!window.location.pathname.toLowerCase().includes("dashboard")) {
+        return;
+    }
+
     if (sessionStorage.getItem(AUTH_KEY) !== "true") {
         window.location.href = "index.html";
         return;
@@ -302,7 +308,9 @@ function setupDashboard() {
     }
 
     fetchStatus();
-    setInterval(fetchStatus, POLL_MS);
+    if (dashboardIntervalId === null) {
+        dashboardIntervalId = setInterval(fetchStatus, POLL_MS);
+    }
 }
 
 function setupLogin() {
@@ -408,6 +416,10 @@ async function fetchLogs() {
 }
 
 function setupHistory() {
+    if (!window.location.pathname.toLowerCase().includes("history")) {
+        return;
+    }
+
     const tableBody = document.getElementById("logsTableBody");
     if (!tableBody) {
         return;
@@ -426,7 +438,9 @@ function setupHistory() {
     }
 
     fetchLogs();
-    setInterval(fetchLogs, POLL_MS);
+    if (historyIntervalId === null) {
+        historyIntervalId = setInterval(fetchLogs, POLL_MS);
+    }
 }
 
 window.setMode = setMode;
@@ -435,7 +449,18 @@ window.fetchStatus = fetchStatus;
 window.fetchLogs = fetchLogs;
 
 document.addEventListener("DOMContentLoaded", () => {
+    const path = window.location.pathname.toLowerCase();
+
+    if (path.includes("dashboard")) {
+        setupDashboard();
+        return;
+    }
+
+    if (path.includes("history")) {
+        setupHistory();
+        return;
+    }
+
+    /* Login page should only handle authentication form interactions. */
     setupLogin();
-    setupDashboard();
-    setupHistory();
 });
